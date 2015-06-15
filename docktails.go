@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/fsouza/go-dockerclient"
 )
@@ -53,7 +54,11 @@ func main() {
 
 	containers, err := dockerClient.ListContainers(docker.ListContainersOptions{All: true})
 	for _, c := range containers {
-		log.Printf("Starting logs for %s", c.ID)
+		if strings.HasPrefix(c.Status, "Exited") {
+			continue
+		}
+
+		log.Printf("Starting docker logs for %s image=%s status=%s", c.ID[:12], c.Image, c.Status)
 		logOpts := baselogOpts
 		logOpts.Container = c.ID
 		stdoutWriter := prefixWriter{os.Stdout, green + c.Names[0] + reset + "  "}
