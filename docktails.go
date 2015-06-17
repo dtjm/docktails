@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/fsouza/go-dockerclient"
 )
@@ -28,10 +29,42 @@ func (p *prefixWriter) Write(b []byte) (int, error) {
 	return p.w.Write(b)
 }
 
+func retryConnect(eventChan chan *docker.APIEvents) *docker.Client {
+
+	dockerHost := os.Getenv("DOCKER_HOST")
+
+	certPath := os.Getenv("DOCKER_CERT_PATH")
+	ca := fmt.Sprintf("%s/ca.pem", certPath)
+	cert := fmt.Sprintf("%s/cert.pem", certPath)
+	key := fmt.Sprintf("%s/key.pem", certPath)
+
+	log.Printf("connecting to %s", dockerHost)
+
+	for {
+		dockerClient, err := docker.NewTLSClient(dockerHost, cert, key, ca)
+		if err != nil {
+			log.Printf("error connecting to docker host, retrying in 5s: %s", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		err = dockerClient.Ping()
+		if err != nil {
+			log.Printf("error pinging docker host, retrying in 5s: %s", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		log.Print("connection succeeded")
+		dockerClient.AddEventListener(eventChan)
+		return dockerClient
+	}
+}
+
 func startDockerLogs(dockerClient *docker.Client, containerID string) {
 	container, err := dockerClient.InspectContainer(containerID)
 	if err != nil {
-		log.Fatalf("unable to get container: %s", err)
+		log.Printf("unable to get container: %s", err)
 	}
 
 	if !container.State.Running {
@@ -58,43 +91,54 @@ func startDockerLogs(dockerClient *docker.Client, containerID string) {
 
 	err = dockerClient.Logs(logOpts)
 	if err != nil {
-		log.Fatalf("unable to start docker logs: %s", err)
+		log.Printf("unable to start docker logs for %s: %s", container.Config.Image, err)
 	}
 }
 
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix(blue + "docktails" + reset + "  ")
+	var eventChan chan *docker.APIEvents
 
-	dockerHost := os.Getenv("DOCKER_HOST")
-
-	certPath := os.Getenv("DOCKER_CERT_PATH")
-	ca := fmt.Sprintf("%s/ca.pem", certPath)
-	cert := fmt.Sprintf("%s/cert.pem", certPath)
-	key := fmt.Sprintf("%s/key.pem", certPath)
-
-	dockerClient, err := docker.NewTLSClient(dockerHost, cert, key, ca)
-	if err != nil {
-		log.Fatalf("Error connecting to docker host: %s", err)
-	}
-
-	log.Printf("Connected to docker host: %s", dockerHost)
+START:
+	eventChan = make(chan *docker.APIEvents)
+	dockerClient := retryConnect(eventChan)
 
 	// Tail logs on all existing containers that are running
-	containers, err := dockerClient.ListContainers(docker.ListContainersOptions{All: true})
-	for _, c := range containers {
-		go startDockerLogs(dockerClient, c.ID)
+	for {
+		log.Printf("getting container list...")
+		containers, err := dockerClient.ListContainers(docker.ListContainersOptions{All: true})
+		if err != nil {
+			log.Printf("error listing containers: %q; retrying in 5s", err)
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		if len(containers) == 0 {
+			log.Print("no containers running")
+		}
+
+		log.Printf("starting logs")
+		for _, c := range containers {
+			go startDockerLogs(dockerClient, c.ID)
+		}
+		break
 	}
 
 	// Listen for new containers to be started, and tail logs on those
-	eventChan := make(chan *docker.APIEvents)
-	dockerClient.AddEventListener(eventChan)
 	for event := range eventChan {
-		log.Printf("docker event %s%s%s %s container=%s", bold, reset, event.Status, event.From, event.ID[:12])
+		containerID := event.ID
+		if len(containerID) > 12 {
+			containerID = containerID[:12]
+		}
+		log.Printf("docker event %s%s%s %s container=%s", bold, reset, event.Status, event.From, containerID)
 
 		switch event.Status {
 		case "start":
 			go startDockerLogs(dockerClient, event.ID)
 		}
 	}
+
+	log.Print("event channel closed, probably lost connection to Docker host; retrying...")
+	goto START
 }
