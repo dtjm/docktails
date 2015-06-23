@@ -12,12 +12,29 @@ import (
 )
 
 var (
-	red   = "\x1b[0;31m"
-	green = "\x1b[0;32m"
-	blue  = "\x1b[0;34m"
-	bold  = "\x1b[1m"
-	reset = "\x1b[0m"
+	red    = "\x1b[0;31m"
+	green  = "\x1b[0;32m"
+	brown  = "\x1b[0;33m"
+	blue   = "\x1b[0;34m"
+	purple = "\x1b[0;35m"
+	cyan   = "\x1b[0;36m"
+	gray   = "\x1b[0;37m"
+
+	boldBlue = "\x1b[1;34m"
+	bold     = "\x1b[1m"
+	reset    = "\x1b[0m"
+
+	colors     = []string{red, green, brown, blue, purple, cyan, gray}
+	colorIndex = 0
 )
+
+func nextColor() string {
+	colorIndex++
+	if colorIndex == len(colors) {
+		colorIndex = 0
+	}
+	return colors[colorIndex]
+}
 
 type prefixWriter struct {
 	w      io.Writer
@@ -78,6 +95,8 @@ func startDockerLogs(dockerClient *docker.Client, containerID string) {
 	log.Printf("starting docker logs for %s %s",
 		container.ID[:12], container.Config.Image)
 
+	color := nextColor()
+
 	name := strings.Trim(container.Name, "/")
 	logOpts := docker.LogsOptions{
 		Container:    containerID,
@@ -85,8 +104,8 @@ func startDockerLogs(dockerClient *docker.Client, containerID string) {
 		Tail:         "0",
 		Stdout:       true,
 		Stderr:       true,
-		OutputStream: &prefixWriter{os.Stdout, green + name + reset + "  "},
-		ErrorStream:  &prefixWriter{os.Stderr, red + name + reset + "  "},
+		OutputStream: &prefixWriter{os.Stdout, color + name + reset + "  "},
+		ErrorStream:  &prefixWriter{os.Stderr, color + name + reset + "  "},
 	}
 
 	err = dockerClient.Logs(logOpts)
@@ -97,7 +116,7 @@ func startDockerLogs(dockerClient *docker.Client, containerID string) {
 
 func main() {
 	log.SetFlags(0)
-	log.SetPrefix(blue + "docktails" + reset + "  ")
+	log.SetPrefix(boldBlue + "docktails" + reset + "  ")
 	var eventChan chan *docker.APIEvents
 
 START:
