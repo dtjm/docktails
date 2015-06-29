@@ -8,6 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"bytes"
+
+	"encoding/json"
+
+	"flag"
+
 	"github.com/fsouza/go-dockerclient"
 )
 
@@ -18,13 +24,12 @@ var (
 	blue   = "\x1b[0;34m"
 	purple = "\x1b[0;35m"
 	cyan   = "\x1b[0;36m"
-	gray   = "\x1b[0;37m"
 
 	boldBlue = "\x1b[1;34m"
 	bold     = "\x1b[1m"
 	reset    = "\x1b[0m"
 
-	colors     = []string{red, green, brown, blue, purple, cyan, gray}
+	colors     = []string{red, green, brown, blue, purple, cyan}
 	colorIndex = 0
 )
 
@@ -37,13 +42,38 @@ func nextColor() string {
 }
 
 type prefixWriter struct {
-	w      io.Writer
-	prefix string
+	w          io.Writer
+	prefix     string
+	prettyJSON bool
 }
 
 func (p *prefixWriter) Write(b []byte) (int, error) {
+	numBytes := len(b)
 	p.w.Write([]byte(p.prefix))
-	return p.w.Write(b)
+
+	if p.prettyJSON {
+		// Check if there is a JSON string in there
+		firstBracketIndex := bytes.Index(b, []byte{'{'})
+		lastBracketIndex := bytes.LastIndex(b, []byte{'}'})
+		if firstBracketIndex != -1 && lastBracketIndex != -1 && lastBracketIndex > firstBracketIndex {
+			v := map[string]interface{}{}
+			jsonBytes := b[firstBracketIndex : lastBracketIndex+1]
+			err := json.Unmarshal(jsonBytes, &v)
+
+			if err == nil {
+				indentedBytes, err := json.MarshalIndent(v, "", "    ")
+				if err == nil {
+					b = bytes.Join([][]byte{b[:firstBracketIndex], indentedBytes, b[lastBracketIndex+1:]}, []byte{})
+				}
+			}
+		}
+
+		numLines := bytes.Count(b, []byte{'\n'})
+		b = bytes.Replace(b, []byte{'\n'}, append([]byte{'\n'}, p.prefix...), numLines-1)
+	}
+
+	p.w.Write(b)
+	return numBytes, nil
 }
 
 func retryConnect(eventChan chan *docker.APIEvents) *docker.Client {
@@ -78,7 +108,7 @@ func retryConnect(eventChan chan *docker.APIEvents) *docker.Client {
 	}
 }
 
-func startDockerLogs(dockerClient *docker.Client, containerID string) {
+func startDockerLogs(dockerClient *docker.Client, containerID string, prettyJSON bool) {
 	container, err := dockerClient.InspectContainer(containerID)
 	if err != nil {
 		log.Printf("unable to get container: %s", err)
@@ -104,8 +134,8 @@ func startDockerLogs(dockerClient *docker.Client, containerID string) {
 		Tail:         "0",
 		Stdout:       true,
 		Stderr:       true,
-		OutputStream: &prefixWriter{os.Stdout, color + name + reset + "  "},
-		ErrorStream:  &prefixWriter{os.Stderr, color + name + reset + "  "},
+		OutputStream: &prefixWriter{os.Stdout, color + name + reset + "  ", prettyJSON},
+		ErrorStream:  &prefixWriter{os.Stderr, color + name + reset + "  ", prettyJSON},
 	}
 
 	err = dockerClient.Logs(logOpts)
@@ -117,7 +147,13 @@ func startDockerLogs(dockerClient *docker.Client, containerID string) {
 func main() {
 	log.SetFlags(0)
 	log.SetPrefix(boldBlue + "docktails" + reset + "  ")
-	var eventChan chan *docker.APIEvents
+	var (
+		eventChan  chan *docker.APIEvents
+		prettyJSON bool
+	)
+
+	flag.BoolVar(&prettyJSON, "json", true, "Pretty-print JSON")
+	flag.Parse()
 
 START:
 	eventChan = make(chan *docker.APIEvents)
@@ -139,7 +175,7 @@ START:
 
 		log.Printf("starting logs")
 		for _, c := range containers {
-			go startDockerLogs(dockerClient, c.ID)
+			go startDockerLogs(dockerClient, c.ID, prettyJSON)
 		}
 		break
 	}
@@ -154,7 +190,7 @@ START:
 
 		switch event.Status {
 		case "start":
-			go startDockerLogs(dockerClient, event.ID)
+			go startDockerLogs(dockerClient, event.ID, prettyJSON)
 		}
 	}
 
