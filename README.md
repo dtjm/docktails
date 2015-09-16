@@ -1,5 +1,7 @@
-docktails (awoo-oo!)
+docktails 
 ====================
+
+![Docktails, awoo-oo!](./docktails.png)
 
 A simple program for viewing logs from your Docker containers.  When you run it,
 it starts outputting logs from all running containers, and watches Docker events

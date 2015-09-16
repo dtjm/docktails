@@ -17,6 +17,10 @@ import (
 	"github.com/fsouza/go-dockerclient"
 )
 
+const (
+	version = "1.0.0"
+)
+
 var (
 	red    = "\x1b[0;31m"
 	green  = "\x1b[0;32m"
@@ -49,6 +53,10 @@ type prefixWriter struct {
 
 func (p *prefixWriter) Write(b []byte) (int, error) {
 	numBytes := len(b)
+	if numBytes == 0 {
+		return 0, nil
+	}
+
 	p.w.Write([]byte(p.prefix))
 
 	if p.prettyJSON {
@@ -112,6 +120,7 @@ func startDockerLogs(dockerClient *docker.Client, containerID string, prettyJSON
 	container, err := dockerClient.InspectContainer(containerID)
 	if err != nil {
 		log.Printf("unable to get container: %s", err)
+		return
 	}
 
 	if !container.State.Running {
@@ -155,6 +164,8 @@ func main() {
 	flag.BoolVar(&prettyJSON, "json", true, "Pretty-print JSON")
 	flag.Parse()
 
+	log.Printf("starting version %s", version)
+
 START:
 	eventChan = make(chan *docker.APIEvents)
 	dockerClient := retryConnect(eventChan)
@@ -180,13 +191,16 @@ START:
 		break
 	}
 
+	dockerLog := log.New(os.Stdout, boldBlue+"docker"+reset+"  ", 0)
+
 	// Listen for new containers to be started, and tail logs on those
 	for event := range eventChan {
 		containerID := event.ID
 		if len(containerID) > 12 {
 			containerID = containerID[:12]
 		}
-		log.Printf("docker event %s%s%s %s container=%s", bold, reset, event.Status, event.From, containerID)
+
+		dockerLog.Printf("event %s%s%s %s container=%s", bold, event.Status, reset, event.From, containerID)
 
 		switch event.Status {
 		case "start":
