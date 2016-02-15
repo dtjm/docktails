@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -8,17 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"bytes"
-
-	"encoding/json"
-
-	"flag"
-
 	"github.com/fsouza/go-dockerclient"
 )
 
 const (
-	version = "1.0.0"
+	version = "1.1.0"
 )
 
 var (
@@ -96,11 +93,24 @@ func retryConnect(eventChan chan *docker.APIEvents) *docker.Client {
 	log.Printf("connecting to %s", dockerHost)
 
 	for {
-		dockerClient, err := docker.NewTLSClient(dockerHost, cert, key, ca)
-		if err != nil {
-			log.Printf("error connecting to docker host, retrying in 5s: %s", err)
-			time.Sleep(5 * time.Second)
-			continue
+		var (
+			dockerClient *docker.Client
+			err          error
+		)
+
+		if dockerHost == "" {
+			dockerClient, err = docker.NewClientFromEnv()
+			if err != nil {
+				log.Printf("error connecting to docker host, retrying in 5s: %s", err)
+				continue
+			}
+		} else {
+			dockerClient, err = docker.NewTLSClient(dockerHost, cert, key, ca)
+			if err != nil {
+				log.Printf("error connecting to docker host, retrying in 5s: %s", err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
 		}
 
 		err = dockerClient.Ping()
@@ -157,11 +167,13 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix(boldBlue + "docktails" + reset + "  ")
 	var (
-		eventChan  chan *docker.APIEvents
-		prettyJSON bool
+		eventChan   chan *docker.APIEvents
+		prettyJSON  bool
+		prefixMatch string
 	)
 
 	flag.BoolVar(&prettyJSON, "json", true, "Pretty-print JSON")
+	flag.StringVar(&prefixMatch, "prefix", "", "Prefix to match for container names")
 	flag.Parse()
 
 	log.Printf("starting version %s", version)
@@ -186,7 +198,14 @@ START:
 
 		log.Printf("starting logs")
 		for _, c := range containers {
-			go startDockerLogs(dockerClient, c.ID, prettyJSON)
+			log.Printf("container %+v", c)
+		INNER:
+			for _, name := range c.Names {
+				if strings.HasPrefix(name, "/"+prefixMatch) {
+					go startDockerLogs(dockerClient, c.ID, prettyJSON)
+					break INNER
+				}
+			}
 		}
 		break
 	}
@@ -202,9 +221,17 @@ START:
 
 		dockerLog.Printf("event %s%s%s %s container=%s", bold, event.Status, reset, event.From, containerID)
 
+		container, err := dockerClient.InspectContainer(containerID)
+		if err != nil {
+			log.Print("error inspecting container=%s", containerID)
+			continue
+		}
+
 		switch event.Status {
 		case "start":
-			go startDockerLogs(dockerClient, event.ID, prettyJSON)
+			if strings.HasPrefix(container.Name, "/"+prefixMatch) {
+				go startDockerLogs(dockerClient, event.ID, prettyJSON)
+			}
 		}
 	}
 
