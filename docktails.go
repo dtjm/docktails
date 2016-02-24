@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version = "1.1.0"
+	version = "1.1.1"
 )
 
 var (
@@ -198,7 +198,6 @@ START:
 
 		log.Printf("starting logs")
 		for _, c := range containers {
-			log.Printf("container %+v", c)
 		INNER:
 			for _, name := range c.Names {
 				if strings.HasPrefix(name, "/"+prefixMatch) {
