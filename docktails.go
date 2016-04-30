@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	version = "1.1.1"
+	version = "1.1.2"
 )
 
 var (
@@ -222,7 +222,7 @@ START:
 
 		container, err := dockerClient.InspectContainer(containerID)
 		if err != nil {
-			log.Print("error inspecting container=%s", containerID)
+			log.Printf("error inspecting container=%s", containerID)
 			continue
 		}
 
