@@ -8,15 +8,14 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/fsouza/go-dockerclient"
 )
 
-const (
-	version = "1.1.2"
-)
+const version = "1.1.3"
 
 var (
 	red    = "\x1b[0;31m"
@@ -61,10 +60,13 @@ func (p *prefixWriter) Write(b []byte) (int, error) {
 		firstBracketIndex := bytes.Index(b, []byte{'{'})
 		lastBracketIndex := bytes.LastIndex(b, []byte{'}'})
 		if firstBracketIndex != -1 && lastBracketIndex != -1 && lastBracketIndex > firstBracketIndex {
-			v := map[string]interface{}{}
+			var v interface{}
 			jsonBytes := b[firstBracketIndex : lastBracketIndex+1]
-			err := json.Unmarshal(jsonBytes, &v)
-
+			var input bytes.Buffer
+			dec := json.NewDecoder(&input)
+			dec.UseNumber()
+			input.Write(jsonBytes)
+			err := dec.Decode(&v)
 			if err == nil {
 				indentedBytes, err := json.MarshalIndent(v, "", "    ")
 				if err == nil {
@@ -167,15 +169,21 @@ func main() {
 	log.SetFlags(0)
 	log.SetPrefix(boldBlue + "docktails" + reset + "  ")
 	var (
-		eventChan   chan *docker.APIEvents
-		prettyJSON  bool
-		prefixMatch string
+		eventChan    chan *docker.APIEvents
+		prettyJSON   bool
+		prefixMatch  string
+		printVersion bool
 	)
 
 	flag.BoolVar(&prettyJSON, "json", true, "Pretty-print JSON")
 	flag.StringVar(&prefixMatch, "prefix", "", "Prefix to match for container names")
+	flag.BoolVar(&printVersion, "version", false, "Print version and exit")
 	flag.Parse()
 
+	if printVersion {
+		fmt.Println("docktails " + version + " " + runtime.Version())
+		os.Exit(0)
+	}
 	log.Printf("starting version %s", version)
 
 START:
